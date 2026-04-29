@@ -1,10 +1,10 @@
 import time
 import threading
 import requests
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ========= CONFIG =========
-import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = "-1003878364200"
 
@@ -28,6 +28,7 @@ trades = 0
 wins = 0
 
 price_history = []
+last_heartbeat = 0
 
 # ========= SERVER =========
 class Handler(BaseHTTPRequestHandler):
@@ -41,8 +42,21 @@ def run_server():
 
 # ========= TELEGRAM =========
 def send(msg):
+    if not BOT_TOKEN:
+        print("❌ BOT_TOKEN is None")
+        return
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHANNEL_ID, "text": msg})
+
+    try:
+        r = requests.post(url, json={
+            "chat_id": CHANNEL_ID,
+            "text": msg
+        })
+        print("📨", msg)
+        print("Telegram:", r.text)
+    except Exception as e:
+        print("❌ Telegram error:", e)
 
 def fmt(p):
     return f"{p:,.2f}"
@@ -50,27 +64,36 @@ def fmt(p):
 # ========= PRICE =========
 def get_price():
     try:
-        c = requests.get("https://api.coinbase.com/v2/prices/spot?currency=USD", timeout=10)
-        k = requests.get("https://api.kraken.com/0/public/Ticker?pair=XBTUSD", timeout=10)
+        c = requests.get(
+            "https://api.coinbase.com/v2/prices/spot?currency=USD",
+            timeout=10
+        )
+        k = requests.get(
+            "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+            timeout=10
+        )
 
         c_price = float(c.json()["data"]["amount"])
         pair = list(k.json()["result"].keys())[0]
         k_price = float(k.json()["result"][pair]["c"][0])
 
         return (c_price + k_price) / 2
-    except:
+    except Exception as e:
+        print("❌ Price error:", e)
         return None
 
 # ========= BOT =========
 def bot():
     global position, entry_price, entry_time, peak_pnl
-    global total_pnl, trades, wins, price_history, last_trade_time
+    global total_pnl, trades, wins, price_history, last_trade_time, last_heartbeat
 
-    send("🚀 Predator V7 Multi-System Live\n⚠️ Experimental")
+    print("🤖 BOT STARTED")
+    send("🚀 Predator V7 Live\n⚠️ Experimental system")
 
     while True:
         try:
             price = get_price()
+
             if not price:
                 time.sleep(SLEEP_TIME)
                 continue
@@ -79,17 +102,22 @@ def bot():
             if len(price_history) > 10:
                 price_history.pop(0)
 
+            # ===== HEARTBEAT (every 60s) =====
+            if time.time() - last_heartbeat > 60:
+                send(f"⏱ Alive | BTC: {fmt(price)}")
+                last_heartbeat = time.time()
+
             if len(price_history) >= 5:
                 p1 = price_history[0]
                 p5 = price_history[-1]
                 p4 = price_history[-2]
 
-                # ===== STRATEGY 1: TREND =====
+                # ===== TREND =====
                 trend_up = p5 > p1
                 move = (p5 - p1) / p1 * 100
                 recent_jump = (p5 - p4) / p4 * 100
 
-                # ===== STRATEGY 2: VOLATILITY =====
+                # ===== VOLATILITY =====
                 volatility = max(price_history) - min(price_history)
                 vol_pct = (volatility / p1) * 100
 
@@ -149,7 +177,7 @@ def bot():
                         position = None
 
         except Exception as e:
-            print("Error:", e)
+            print("❌ Error:", e)
 
         time.sleep(SLEEP_TIME)
 
