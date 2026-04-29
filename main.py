@@ -46,7 +46,7 @@ def log_trade(side, entry, exit_price, pnl):
 def heartbeat(price):
     send(f"⏱ Alive | BTC: {price:,.2f}")
 
-# === SIMPLE WEB SERVER (for Render) ===
+# === WEB SERVER (Render requirement) ===
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -56,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
 def run_server():
     HTTPServer(("0.0.0.0", 7860), Handler).serve_forever()
 
-# === MAIN LOOP ===
+# === MAIN BOT LOOP ===
 def run_bot():
     global position, entry_price
 
@@ -71,33 +71,41 @@ def run_bot():
             if len(prices) > 6:
                 prices.pop(0)
 
-            # --- WAIT UNTIL WE HAVE ENOUGH DATA ---
             if len(prices) < 6:
                 time.sleep(5)
                 continue
 
-            # === CALCULATE CHANGES ===
+            # === PRICE CHANGES ===
             change_1 = (prices[-1] - prices[-2]) / prices[-2]
             change_3 = (prices[-1] - prices[-4]) / prices[-4]
             change_5 = (prices[-1] - prices[0]) / prices[0]
 
-            # === RELAXED ENTRY CONDITIONS ===
+            # === TREND CONDITIONS (relaxed) ===
             strong_move = change_1 > 0.008
             building_trend = change_3 > 0.012
             overall_trend = change_5 > 0.015
 
-            # === BUY ===
-            if position is None and strong_move and building_trend and overall_trend:
-                position = "LONG"
-                entry_price = price
-                send(f"🟢 BUY\nEntry: {price:,.2f}")
+            # === BUY LOGIC ===
+            if position is None:
 
-            # === SELL ===
+                # Trend trade
+                if strong_move and building_trend and overall_trend:
+                    position = "LONG"
+                    entry_price = price
+                    send(f"🟢 BUY (TREND)\nEntry: {price:,.2f}")
+
+                # Scalp fallback (sideways markets)
+                elif change_1 > 0.002:
+                    position = "LONG"
+                    entry_price = price
+                    send(f"🟡 BUY (SCALP)\nEntry: {price:,.2f}")
+
+            # === SELL LOGIC ===
             elif position == "LONG":
                 pnl = price - entry_price
 
-                # take profit or stop loss
-                if pnl > 50 or pnl < -30:
+                # take profit / stop loss
+                if pnl > 40 or pnl < -25:
                     send(f"🔴 SELL\nExit: {price:,.2f}\nPnL: {pnl:.2f}")
                     log_trade("LONG", entry_price, price, pnl)
                     position = None
@@ -113,7 +121,7 @@ def run_bot():
             print("ERROR:", e)
             time.sleep(5)
 
-# === START EVERYTHING ===
+# === START APP ===
 if __name__ == "__main__":
     print("🚀 STARTING APP...")
     send("🚀 Predator V7 Live")
