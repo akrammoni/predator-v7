@@ -31,7 +31,7 @@ def send(msg):
     except Exception as e:
         print("Telegram Error:", e)
 
-# === GET BTC PRICE (FIXED) ===
+# === GET PRICE (SAFE) ===
 def get_price():
     url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
     try:
@@ -59,10 +59,6 @@ def log_trade(side, entry, exit_price, pnl):
             pnl
         ])
 
-# === HEARTBEAT ===
-def heartbeat(price):
-    send(f"⏱ Alive | BTC: {price:,.2f}")
-
 # === MAIN BOT LOOP ===
 def run_bot():
     global position, entry_price
@@ -74,7 +70,17 @@ def run_bot():
     while True:
         try:
             price = get_price()
+            print("DEBUG price:", price)
 
+            # 🔥 HEARTBEAT ALWAYS RUNS
+            if time.time() - last_heartbeat > 60:
+                if price is not None:
+                    send(f"⏱ Alive | BTC: {price:,.2f}")
+                else:
+                    send("⏱ Alive (price unavailable)")
+                last_heartbeat = time.time()
+
+            # skip logic if no price
             if price is None:
                 time.sleep(5)
                 continue
@@ -89,29 +95,30 @@ def run_bot():
                 time.sleep(5)
                 continue
 
-            # === PRICE CHANGES ===
+            # === PRICE CHANGES (RELAXED FOR TESTING) ===
             change_1 = (prices[-1] - prices[-2]) / prices[-2]
             change_3 = (prices[-1] - prices[-4]) / prices[-4]
             change_5 = (prices[-1] - prices[0]) / prices[0]
 
-            # === TREND CONDITIONS ===
-            strong_move = change_1 > 0.008
-            building_trend = change_3 > 0.012
-            overall_trend = change_5 > 0.015
+            print(f"Δ1: {change_1:.4f}, Δ3: {change_3:.4f}, Δ5: {change_5:.4f}")
 
-            # === BUY LOGIC ===
+            strong_move = change_1 > 0.0015
+            building_trend = change_3 > 0.0025
+            overall_trend = change_5 > 0.004
+
+            # === BUY ===
             if position is None:
                 if strong_move and building_trend and overall_trend:
                     position = "LONG"
                     entry_price = price
                     send(f"🟢 BUY (TREND)\nEntry: {price:,.2f}")
 
-                elif change_1 > 0.002:
+                elif change_1 > 0.001:
                     position = "LONG"
                     entry_price = price
                     send(f"🟡 BUY (SCALP)\nEntry: {price:,.2f}")
 
-            # === SELL LOGIC ===
+            # === SELL ===
             elif position == "LONG":
                 pnl = price - entry_price
 
@@ -119,11 +126,6 @@ def run_bot():
                     send(f"🔴 SELL\nExit: {price:,.2f}\nPnL: {pnl:.2f}")
                     log_trade("LONG", entry_price, price, pnl)
                     position = None
-
-            # === HEARTBEAT ===
-            if time.time() - last_heartbeat > 60:
-                heartbeat(price)
-                last_heartbeat = time.time()
 
             time.sleep(5)
 
