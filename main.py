@@ -3,7 +3,10 @@ import time
 import os
 import csv
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+from flask import Flask
+
+app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = "-1003878364200"
@@ -46,21 +49,12 @@ def log_trade(side, entry, exit_price, pnl):
 def heartbeat(price):
     send(f"⏱ Alive | BTC: {price:,.2f}")
 
-# === WEB SERVER (Render requirement) ===
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running")
-
-def run_server():
-    HTTPServer(("0.0.0.0", 7860), Handler).serve_forever()
-
 # === MAIN BOT LOOP ===
 def run_bot():
     global position, entry_price
 
     last_heartbeat = 0
+    print("🤖 BOT LOOP STARTED")
 
     while True:
         try:
@@ -80,21 +74,18 @@ def run_bot():
             change_3 = (prices[-1] - prices[-4]) / prices[-4]
             change_5 = (prices[-1] - prices[0]) / prices[0]
 
-            # === TREND CONDITIONS (relaxed) ===
+            # === TREND CONDITIONS ===
             strong_move = change_1 > 0.008
             building_trend = change_3 > 0.012
             overall_trend = change_5 > 0.015
 
             # === BUY LOGIC ===
             if position is None:
-
-                # Trend trade
                 if strong_move and building_trend and overall_trend:
                     position = "LONG"
                     entry_price = price
                     send(f"🟢 BUY (TREND)\nEntry: {price:,.2f}")
 
-                # Scalp fallback (sideways markets)
                 elif change_1 > 0.002:
                     position = "LONG"
                     entry_price = price
@@ -104,13 +95,12 @@ def run_bot():
             elif position == "LONG":
                 pnl = price - entry_price
 
-                # take profit / stop loss
                 if pnl > 40 or pnl < -25:
                     send(f"🔴 SELL\nExit: {price:,.2f}\nPnL: {pnl:.2f}")
                     log_trade("LONG", entry_price, price, pnl)
                     position = None
 
-            # === HEARTBEAT EVERY 60s ===
+            # === HEARTBEAT ===
             if time.time() - last_heartbeat > 60:
                 heartbeat(price)
                 last_heartbeat = time.time()
@@ -121,13 +111,15 @@ def run_bot():
             print("ERROR:", e)
             time.sleep(5)
 
-# === START APP ===
-if __name__ == "__main__":
-    print("🚀 STARTING APP...")
-    send("🚀 Predator V7 Live")
+# === FLASK HEALTH CHECK ===
+@app.route("/")
+def home():
+    return "✅ Bot A is running", 200
 
-    import threading
-    threading.Thread(target=run_server).start()
+# === START THREAD (IMPORTANT) ===
+def start_bot():
+    t = threading.Thread(target=run_bot)
+    t.daemon = True
+    t.start()
 
-    print("🤖 BOT STARTED")
-    run_bot()
+start_bot()
