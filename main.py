@@ -23,15 +23,29 @@ def send(msg):
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     data = {"chat_id": CHAT_ID, "text": msg}
-    r = requests.post(url, data=data)
-    print("📨", msg)
-    print("Telegram:", r.text)
 
-# === GET BTC PRICE ===
+    try:
+        r = requests.post(url, data=data, timeout=10)
+        print("📨", msg)
+        print("Telegram:", r.text)
+    except Exception as e:
+        print("Telegram Error:", e)
+
+# === GET BTC PRICE (FIXED) ===
 def get_price():
     url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
-    r = requests.get(url).json()
-    return float(r["price"])
+    try:
+        r = requests.get(url, timeout=10).json()
+
+        if "price" not in r:
+            print("⚠️ Bad API response:", r)
+            return None
+
+        return float(r["price"])
+
+    except Exception as e:
+        print("⚠️ Price fetch error:", e)
+        return None
 
 # === SAVE TRADE ===
 def log_trade(side, entry, exit_price, pnl):
@@ -55,11 +69,17 @@ def run_bot():
 
     last_heartbeat = 0
     print("🤖 BOT LOOP STARTED")
+    send("🚀 Predator V7 Live")
 
     while True:
         try:
             price = get_price()
-            print("💰 Price:", price)
+
+            if price is None:
+                time.sleep(5)
+                continue
+
+            print(f"💰 Price: {price:,.2f}")
 
             prices.append(price)
             if len(prices) > 6:
@@ -111,12 +131,12 @@ def run_bot():
             print("ERROR:", e)
             time.sleep(5)
 
-# === FLASK HEALTH CHECK ===
+# === HEALTH CHECK ===
 @app.route("/")
 def home():
     return "✅ Bot A is running", 200
 
-# === START THREAD (IMPORTANT) ===
+# === START THREAD ===
 def start_bot():
     t = threading.Thread(target=run_bot)
     t.daemon = True
