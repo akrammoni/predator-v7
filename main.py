@@ -1,8 +1,6 @@
 import requests
 import time
 import os
-import csv
-from datetime import datetime
 import threading
 from flask import Flask
 
@@ -14,134 +12,93 @@ CHAT_ID = "-1003878364200"
 prices = []
 position = None
 entry_price = 0
+last_good_price = None
 
-# === TELEGRAM SEND ===
+# === TELEGRAM ===
 def send(msg):
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN missing")
-        return
-
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": msg}
+    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
 
-    try:
-        r = requests.post(url, data=data, timeout=10)
-        print("📨", msg)
-        print("Telegram:", r.text)
-    except Exception as e:
-        print("Telegram Error:", e)
-
-# === GET PRICE (SAFE) ===
+# === GET PRICE (BINANCE + FALLBACK) ===
 def get_price():
-    url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+    global last_good_price
+
     try:
-        r = requests.get(url, timeout=10).json()
+        r = requests.get(
+            "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
+            timeout=10
+        ).json()
 
-        if "price" not in r:
-            print("⚠️ Bad API response:", r)
-            return None
+        if "price" in r:
+            price = float(r["price"])
+            last_good_price = price
+            return price
 
-        return float(r["price"])
+    except:
+        pass
 
-    except Exception as e:
-        print("⚠️ Price fetch error:", e)
-        return None
+    # fallback
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+            timeout=10
+        ).json()
 
-# === SAVE TRADE ===
-def log_trade(side, entry, exit_price, pnl):
-    with open("trades.csv", "a", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            side,
-            entry,
-            exit_price,
-            pnl
-        ])
+        price = r["bitcoin"]["usd"]
+        last_good_price = price
+        return price
 
-# === MAIN BOT LOOP ===
+    except:
+        return last_good_price
+
+# === BOT LOOP ===
 def run_bot():
     global position, entry_price
 
     last_heartbeat = 0
-    print("🤖 BOT LOOP STARTED")
-    send("🚀 Predator V7 Live")
+    send("🚀 Bot A LIVE")
 
     while True:
-        try:
-            price = get_price()
-            print("DEBUG price:", price)
+        price = get_price()
 
-            # 🔥 HEARTBEAT ALWAYS RUNS
-            if time.time() - last_heartbeat > 60:
-                if price is not None:
-                    send(f"⏱ Alive | BTC: {price:,.2f}")
-                else:
-                    send("⏱ Alive (price unavailable)")
-                last_heartbeat = time.time()
-
-            # skip logic if no price
-            if price is None:
-                time.sleep(5)
-                continue
-
-            print(f"💰 Price: {price:,.2f}")
-
+        if price:
             prices.append(price)
             if len(prices) > 6:
                 prices.pop(0)
 
-            if len(prices) < 6:
-                time.sleep(5)
-                continue
+        # HEARTBEAT
+        if time.time() - last_heartbeat > 60:
+            if price:
+                send(f"⏱ BTC: {price:,.2f}")
+            else:
+                send("⏱ Alive (no data)")
+            last_heartbeat = time.time()
 
-            # === PRICE CHANGES (RELAXED FOR TESTING) ===
-            change_1 = (prices[-1] - prices[-2]) / prices[-2]
-            change_3 = (prices[-1] - prices[-4]) / prices[-4]
-            change_5 = (prices[-1] - prices[0]) / prices[0]
+        if len(prices) < 6:
+            time.sleep(12)
+            continue
 
-            print(f"Δ1: {change_1:.4f}, Δ3: {change_3:.4f}, Δ5: {change_5:.4f}")
+        c1 = (prices[-1] - prices[-2]) / prices[-2]
 
-            strong_move = change_1 > 0.0015
-            building_trend = change_3 > 0.0025
-            overall_trend = change_5 > 0.004
+        # BUY
+        if position is None and c1 > 0.001:
+            position = "LONG"
+            entry_price = price
+            send(f"🟢 BUY {price:,.2f}")
 
-            # === BUY ===
-            if position is None:
-                if strong_move and building_trend and overall_trend:
-                    position = "LONG"
-                    entry_price = price
-                    send(f"🟢 BUY (TREND)\nEntry: {price:,.2f}")
+        # SELL
+        elif position == "LONG":
+            pnl = price - entry_price
 
-                elif change_1 > 0.001:
-                    position = "LONG"
-                    entry_price = price
-                    send(f"🟡 BUY (SCALP)\nEntry: {price:,.2f}")
+            if pnl > 40 or pnl < -25:
+                send(f"🔴 SELL {price:,.2f} | PnL {pnl:.2f}")
+                position = None
 
-            # === SELL ===
-            elif position == "LONG":
-                pnl = price - entry_price
+        time.sleep(12)
 
-                if pnl > 40 or pnl < -25:
-                    send(f"🔴 SELL\nExit: {price:,.2f}\nPnL: {pnl:.2f}")
-                    log_trade("LONG", entry_price, price, pnl)
-                    position = None
-
-            time.sleep(5)
-
-        except Exception as e:
-            print("ERROR:", e)
-            time.sleep(5)
-
-# === HEALTH CHECK ===
+# === SERVER ===
 @app.route("/")
 def home():
-    return "✅ Bot A is running", 200
+    return "Bot A running", 200
 
-# === START THREAD ===
-def start_bot():
-    t = threading.Thread(target=run_bot)
-    t.daemon = True
-    t.start()
-
-start_bot()
+threading.Thread(target=run_bot, daemon=True).start()
