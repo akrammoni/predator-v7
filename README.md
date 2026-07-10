@@ -22,5 +22,3 @@
 ### 1. Environment Variables
 To securely run this engine, you must inject your credentials into your hosting provider's environment variables or use a local `.env` file:
 
-```env
-BOT_TOKEN="your_telegram_bot_token_here"
